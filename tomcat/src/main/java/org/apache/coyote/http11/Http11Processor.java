@@ -78,7 +78,7 @@ public class Http11Processor implements Runnable, Processor {
                     resourcePath = "static" + requestPath;
                 }
 
-                URL resource = ClassLoader.getSystemResource(resourcePath);
+                URL resource = getClass().getClassLoader().getResource(resourcePath);
                 if (resource != null) {
                     responseBodyBytes = Files.readAllBytes(Path.of(resource.toURI()));
                     if (resourcePath.endsWith(".css")) {
@@ -89,7 +89,7 @@ public class Http11Processor implements Runnable, Processor {
 
             if (responseBodyBytes == null) {
                 statusCode = "404 Not Found";
-                URL resource404 = ClassLoader.getSystemResource("static/404.html");
+                URL resource404 = getClass().getClassLoader().getResource("static/404.html");
                 if (resource404 != null) {
                     responseBodyBytes = Files.readAllBytes(Path.of(resource404.toURI()));
                 } else {
