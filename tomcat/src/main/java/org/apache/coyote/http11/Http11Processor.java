@@ -68,22 +68,22 @@ public class Http11Processor implements Runnable, Processor {
                 if (!user.checkPassword(queryParams.get("password"))) {
                     throw new IllegalArgumentException("입력된 password가 등록된 값과 일치하지 않습니다.");
                 }
-
+                responseBodyBytes = "로그인 성공".getBytes();
                 log.atInfo().log("user: {}", user.toString());
-            }
-
-            String resourcePath;
-            if ("/login".equals(requestPath)) {
-                resourcePath = "static/login.html";
             } else {
-                resourcePath = "static" + requestPath;
-            }
+                String resourcePath;
+                if ("/login".equals(requestPath)) {
+                    resourcePath = "static/login.html";
+                } else {
+                    resourcePath = "static" + requestPath;
+                }
 
-            URL resource = ClassLoader.getSystemResource(resourcePath);
-            if (resource != null) {
-                responseBodyBytes = Files.readAllBytes(Path.of(resource.toURI()));
-                if (resourcePath.endsWith(".css")) {
-                    contentType = "text/css";
+                URL resource = ClassLoader.getSystemResource(resourcePath);
+                if (resource != null) {
+                    responseBodyBytes = Files.readAllBytes(Path.of(resource.toURI()));
+                    if (resourcePath.endsWith(".css")) {
+                        contentType = "text/css";
+                    }
                 }
             }
 
@@ -108,9 +108,9 @@ public class Http11Processor implements Runnable, Processor {
             outputStream.flush();
 
         } catch (IOException | UncheckedServletException | URISyntaxException e) {
-            log.error(e.getMessage(), e);
+            log.atError().log(e.getMessage(), e);
         } catch (IllegalArgumentException e) {
-            log.warn(e.getMessage());
+            log.atWarn().log(e.getMessage());
         }
     }
 
