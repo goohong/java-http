@@ -9,6 +9,9 @@ import java.net.URISyntaxException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Arrays;
+import java.util.HashMap;
+import java.util.Map;
 import org.apache.coyote.Processor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -41,6 +44,26 @@ public class Http11Processor implements Runnable, Processor {
             String requestLine = bufferedReader.readLine();
             String requestURI = requestLine.split(" ")[1];
 
+            Map<String, String> requestHeaders = new HashMap<>();
+            while (true) {
+                String line = bufferedReader.readLine();
+                if (line == null || line.isEmpty()) {
+                    break;
+                }
+                String headerName = line.split(": ")[0];
+                String headerContent = line.split(": ")[1];
+                requestHeaders.put(headerName, headerContent);
+            }
+            String contentType = "text/html;charset=utf-8 ";
+
+            if (requestHeaders.get("Accept") != null) {
+                String acceptHeaderContent = requestHeaders.get("Accept");
+                String[] acceptHeaders = acceptHeaderContent.split(",");
+                if (Arrays.asList(acceptHeaders).contains("text/css")) {
+                    contentType = "text/css";
+                }
+            }
+
             if (!"/".equals(requestURI)) {
                 Path path = Path.of(ClassLoader.getSystemResource("static" + requestURI).toURI());
                 responseBodyBytes = Files.readAllBytes(path);
@@ -48,7 +71,7 @@ public class Http11Processor implements Runnable, Processor {
 
             var responseHeaders = String.join("\r\n",
                     "HTTP/1.1 200 OK ",
-                    "Content-Type: " + "text/html;charset=utf-8 ",
+                    "Content-Type: " + contentType,
                     "Content-Length: " + responseBodyBytes.length + " ",
                     "\r\n");
 
