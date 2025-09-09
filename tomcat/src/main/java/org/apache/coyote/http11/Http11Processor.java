@@ -45,101 +45,35 @@ public class Http11Processor implements Runnable, Processor {
              final var bufferedReader = new BufferedReader(inputStreamReader);
              final var outputStream = connection.getOutputStream()) {
 
-            String requestLine = bufferedReader.readLine();
+            final String requestLine = bufferedReader.readLine();
             if (requestLine == null) {
                 return;
             }
-            String[] requestLineParts = requestLine.split(" ");
-            String requestHttpMethod = requestLineParts[0];
-            String fullRequestURI = requestLineParts[1];
 
-            Map<String, String> requestHeaders = parseRequestHeaders(bufferedReader);
+            final String[] requestLineParts = requestLine.split(" ");
+            final String requestHttpMethod = requestLineParts[0];
+            final String fullRequestURI = requestLineParts[1];
+            final Map<String, String> requestHeaders = parseRequestHeaders(bufferedReader);
 
-            URI uri = new URI(fullRequestURI);
-            String requestPath = uri.getPath();
-            Map<String, String> requestParams = new HashMap<>();
+            final URI uri = new URI(fullRequestURI);
+            final String requestPath = uri.getPath();
+            final Map<String, String> requestParams = parseRequestParams(uri, requestHttpMethod, requestHeaders,
+                    bufferedReader);
 
-            if (uri.getQuery() != null) {
-                requestParams.putAll(parseUrlEncoded(uri.getQuery()));
-            }
+            final HttpResponse response = route(requestHttpMethod, requestPath, requestParams);
 
-            if ("POST".equals(requestHttpMethod)) {
-                int contentLength = Integer.parseInt(requestHeaders.getOrDefault("Content-Length", "0"));
-                if (contentLength > 0) {
-                    String requestBody = parseRequestBody(contentLength, bufferedReader);
-                    requestParams.putAll(parseUrlEncoded(requestBody));
-                }
-            }
-
-            Map<String, String> headers = new LinkedHashMap<>();
-            byte[] responseBodyBytes = null;
-            String contentType = "text/html;charset=utf-8";
-            String statusCode = "200 OK";
-
-            if ("/".equals(requestPath) && "GET".equals(requestHttpMethod)) {
-                responseBodyBytes = "Hello world!".getBytes(StandardCharsets.UTF_8);
-
-            } else if ("/login".equals(requestPath) && "POST".equals(requestHttpMethod)) {
-                String account = requestParams.get("account");
-                String password = requestParams.get("password");
-
-                Optional<User> user = InMemoryUserRepository.findByAccount(account);
-
-                if (user.isPresent() && user.get().checkPassword(password)) {
-                    statusCode = "302 Found";
-                    headers.put("Location", "/index.html");
-                    responseBodyBytes = "로그인 성공".getBytes(StandardCharsets.UTF_8);
-                    log.info("로그인 성공. user: {}", user.get());
-                } else {
-                    statusCode = "401 Unauthorized";
-                    URL resource = getClass().getClassLoader().getResource("static/401.html");
-                    if (resource != null) {
-                        responseBodyBytes = Files.readAllBytes(Path.of(resource.toURI()));
-                    }
-                    log.info("로그인 실패");
-                }
-            } else {
-                String resourcePath;
-                if ("/login".equals(requestPath) && "GET".equals(requestHttpMethod)) {
-                    resourcePath = "static/login.html";
-                } else {
-                    resourcePath = "static" + requestPath;
-                }
-
-                URL resource = getClass().getClassLoader().getResource(resourcePath);
-                if (resource != null) {
-                    responseBodyBytes = Files.readAllBytes(Path.of(resource.toURI()));
-                    if (resourcePath.endsWith(".css")) {
-                        contentType = "text/css";
-                    }
-                }
-            }
-
-            if (responseBodyBytes == null) {
-                statusCode = "404 Not Found";
-                URL resource404 = getClass().getClassLoader().getResource("static/404.html");
-                if (resource404 != null) {
-                    responseBodyBytes = Files.readAllBytes(Path.of(resource404.toURI()));
-                } else {
-                    responseBodyBytes = "404 Not Found".getBytes(StandardCharsets.UTF_8);
-                }
-            }
-
-            headers.put("Content-Type", contentType);
-            headers.put("Content-Length", String.valueOf(responseBodyBytes.length));
-
-            StringBuilder headerBuilder = new StringBuilder();
-            for (Map.Entry<String, String> entry : headers.entrySet()) {
+            final StringBuilder headerBuilder = new StringBuilder();
+            for (Map.Entry<String, String> entry : response.headers.entrySet()) {
                 headerBuilder.append(entry.getKey())
                         .append(": ")
                         .append(entry.getValue())
                         .append("\r\n");
             }
 
-            outputStream.write(("HTTP/1.1 " + statusCode + "\r\n").getBytes(StandardCharsets.UTF_8));
+            outputStream.write(("HTTP/1.1 " + response.statusCode + "\r\n").getBytes(StandardCharsets.UTF_8));
             outputStream.write(headerBuilder.toString().getBytes(StandardCharsets.UTF_8));
             outputStream.write("\r\n".getBytes(StandardCharsets.UTF_8));
-            outputStream.write(responseBodyBytes);
+            outputStream.write(response.body);
             outputStream.flush();
 
         } catch (IOException | URISyntaxException | UncheckedServletException e) {
@@ -147,6 +81,140 @@ public class Http11Processor implements Runnable, Processor {
         } catch (IllegalArgumentException e) {
             log.atWarn().log(e.getMessage());
         }
+    }
+
+    private Map<String, String> parseRequestParams(final URI uri, final String httpMethod,
+                                                   final Map<String, String> requestHeaders,
+                                                   final BufferedReader bufferedReader) throws IOException {
+        final Map<String, String> requestParams = new HashMap<>();
+
+        if (uri.getQuery() != null) {
+            requestParams.putAll(parseUrlEncoded(uri.getQuery()));
+        }
+
+        if ("POST".equals(httpMethod)) {
+            final int contentLength = Integer.parseInt(requestHeaders.getOrDefault("Content-Length", "0"));
+            if (contentLength > 0) {
+                final String requestBody = parseRequestBody(contentLength, bufferedReader);
+                requestParams.putAll(parseUrlEncoded(requestBody));
+            }
+        }
+        return requestParams;
+    }
+
+    private HttpResponse route(final String httpMethod, final String requestPath,
+                               final Map<String, String> requestParams)
+            throws IOException, URISyntaxException {
+        if (httpMethod.equals("GET") && requestPath.equals("/")) {
+            return serveStaticHtml("static/index.html");
+        }
+        if (httpMethod.equals("GET") && requestPath.equals("/login")) {
+            return serveStaticHtml("static/login.html");
+        }
+        if (httpMethod.equals("POST") && requestPath.equals("/login")) {
+            return handleLoginPost(requestParams);
+        }
+        if (httpMethod.equals("GET") && requestPath.equals("/register")) {
+            return serveStaticHtml("static/register.html");
+        }
+        if (httpMethod.equals("POST") && requestPath.equals("/register")) {
+            return handleRegisterPost(requestParams);
+        }
+        return handleStaticResource(requestPath);
+    }
+
+    private HttpResponse handleLoginPost(final Map<String, String> requestParams)
+            throws IOException, URISyntaxException {
+        final String account = requestParams.get("account");
+        final String password = requestParams.get("password");
+        final Optional<User> user = InMemoryUserRepository.findByAccount(account);
+
+        if (user.isPresent() && user.get().checkPassword(password)) {
+            log.info("로그인 성공. user: {}", user.get());
+            final byte[] body = "로그인 성공".getBytes(StandardCharsets.UTF_8);
+            final Map<String, String> headers = createDefaultHeaders("text/html;charset=utf-8", body.length);
+            headers.put("Location", "/index.html");
+            return new HttpResponse("302 Found", headers, body);
+        }
+
+        log.info("로그인 실패");
+        final URL resource = getClass().getClassLoader().getResource("static/401.html");
+        final byte[] body = Files.readAllBytes(Path.of(resource.toURI()));
+        final Map<String, String> headers = createDefaultHeaders("text/html;charset=utf-8", body.length);
+        return new HttpResponse("401 Unauthorized", headers, body);
+    }
+
+    private HttpResponse handleRegisterPost(final Map<String, String> requestParams) {
+        final String account = requestParams.get("account");
+        final String email = requestParams.get("email");
+        final String password = requestParams.get("password");
+        final Optional<User> user = InMemoryUserRepository.findByAccount(account);
+
+        if (user.isPresent()) {
+            log.info("회원가입 실패 - 계정 중복: {}", account);
+            final Map<String, String> headers = new LinkedHashMap<>();
+            headers.put("Location", "/register.html");
+            return new HttpResponse("302 Found", headers, new byte[0]);
+        }
+
+        InMemoryUserRepository.save(new User(account, password, email));
+        log.info("회원가입 성공. user account: {}", account);
+
+        final Map<String, String> headers = new LinkedHashMap<>();
+        headers.put("Location", "/login.html");
+        return new HttpResponse("302 Found", headers, new byte[0]);
+    }
+
+    private HttpResponse handleStaticResource(final String requestPath) throws IOException, URISyntaxException {
+        final String resourcePath = "static" + requestPath;
+        final URL resource = getClass().getClassLoader().getResource(resourcePath);
+        if (resource != null) {
+            final byte[] body = Files.readAllBytes(Path.of(resource.toURI()));
+            final String contentType = getContentType(resourcePath);
+            final Map<String, String> headers = createDefaultHeaders(contentType, body.length);
+            return new HttpResponse("200 OK", headers, body);
+        }
+
+        return handleNotFound();
+    }
+
+    private HttpResponse handleNotFound() throws IOException, URISyntaxException {
+        final URL resource404 = getClass().getClassLoader().getResource("static/404.html");
+        final byte[] body;
+        if (resource404 != null) {
+            body = Files.readAllBytes(Path.of(resource404.toURI()));
+        } else {
+            body = "404 Not Found".getBytes(StandardCharsets.UTF_8);
+        }
+        final Map<String, String> headers = createDefaultHeaders("text/html;charset=utf-8", body.length);
+        return new HttpResponse("404 Not Found", headers, body);
+    }
+
+    private HttpResponse serveStaticHtml(String resourcePath) throws IOException, URISyntaxException {
+        final URL resource = getClass().getClassLoader().getResource(resourcePath);
+        if (resource != null) {
+            final byte[] body = Files.readAllBytes(Path.of(resource.toURI()));
+            final Map<String, String> headers = createDefaultHeaders("text/html;charset=utf-8", body.length);
+            return new HttpResponse("200 OK", headers, body);
+        }
+        return handleNotFound();
+    }
+
+    private String getContentType(final String resourcePath) {
+        if (resourcePath.endsWith(".css")) {
+            return "text/css";
+        }
+        if (resourcePath.endsWith(".js")) {
+            return "application/javascript";
+        }
+        return "text/html;charset=utf-8";
+    }
+
+    private Map<String, String> createDefaultHeaders(final String contentType, final int contentLength) {
+        final Map<String, String> headers = new LinkedHashMap<>();
+        headers.put("Content-Type", contentType);
+        headers.put("Content-Length", String.valueOf(contentLength));
+        return headers;
     }
 
     private String parseRequestBody(final int contentLength, final BufferedReader bufferedReader) throws IOException {
@@ -183,5 +251,8 @@ public class Http11Processor implements Runnable, Processor {
             }
         }
         return requestHeaders;
+    }
+
+    private record HttpResponse(String statusCode, Map<String, String> headers, byte[] body) {
     }
 }
