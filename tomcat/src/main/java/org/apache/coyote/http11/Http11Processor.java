@@ -15,7 +15,9 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Optional;
 import org.apache.coyote.Processor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -55,7 +57,7 @@ public class Http11Processor implements Runnable, Processor {
 
             Map<String, String> queryParams = parseQueryParams(query);
             Map<String, String> requestHeaders = parseRequestHeaders(bufferedReader);
-
+            Map<String, String> headers = new LinkedHashMap<>();
             byte[] responseBodyBytes = null;
             String contentType = "text/html;charset=utf-8";
             String statusCode = "200 OK";
@@ -63,13 +65,20 @@ public class Http11Processor implements Runnable, Processor {
             if ("/".equals(requestPath)) {
                 responseBodyBytes = "Hello world!".getBytes(StandardCharsets.UTF_8);
             } else if ("/login".equals(requestPath) && queryParams.containsKey("account")) {
-                User user = InMemoryUserRepository.findByAccount(queryParams.get("account"))
-                        .orElseThrow(() -> new IllegalArgumentException("입력된 값과 일치하는 user가 존재하지 않습니다."));
-                if (!user.checkPassword(queryParams.get("password"))) {
-                    throw new IllegalArgumentException("입력된 password가 등록된 값과 일치하지 않습니다.");
+                Optional<User> user = InMemoryUserRepository.findByAccount(queryParams.get("account"));
+                if (user.isEmpty() || !user.get().checkPassword(queryParams.get("password"))) {
+                    statusCode = "401 Unauthorized";
+                    URL resource = getClass().getClassLoader().getResource("static/401.html");
+                    if (resource != null) {
+                        responseBodyBytes = Files.readAllBytes(Path.of(resource.toURI()));
+                        log.atInfo().log("로그인 실패");
+                    }
+                } else {
+                    statusCode = "302 Found";
+                    headers.put("Location", "/index.html");
+                    responseBodyBytes = "로그인 성공".getBytes();
+                    log.atInfo().log("user: {}", user.toString());
                 }
-                responseBodyBytes = "로그인 성공".getBytes();
-                log.atInfo().log("user: {}", user.toString());
             } else {
                 String resourcePath;
                 if ("/login".equals(requestPath)) {
@@ -97,12 +106,21 @@ public class Http11Processor implements Runnable, Processor {
                 }
             }
 
-            String responseHeaders = String.join(" \r\n",
-                    "HTTP/1.1 " + statusCode,
-                    "Content-Type: " + contentType,
-                    "Content-Length: " + responseBodyBytes.length,
-                    "\r\n");
+            headers.put("Content-Type", contentType);
+            headers.put("Content-Length", String.valueOf(responseBodyBytes.length));
 
+            StringBuilder headerBuilder = new StringBuilder();
+            for (Map.Entry<String, String> entry : headers.entrySet()) {
+                headerBuilder.append(entry.getKey())
+                        .append(": ")
+                        .append(entry.getValue())
+                        .append(" \r\n");
+            }
+            headerBuilder.append("\r\n");
+
+            String responseHeaders = headerBuilder.toString();
+
+            outputStream.write(("HTTP/1.1 " + statusCode + " \r\n").getBytes());
             outputStream.write(responseHeaders.getBytes(StandardCharsets.UTF_8));
             outputStream.write(responseBodyBytes);
             outputStream.flush();
