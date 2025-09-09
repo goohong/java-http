@@ -49,39 +49,58 @@ public class Http11Processor implements Runnable, Processor {
             if (requestLine == null) {
                 return;
             }
-            String fullRequestURI = requestLine.split(" ")[1];
+            String[] requestLineParts = requestLine.split(" ");
+            String requestHttpMethod = requestLineParts[0];
+            String fullRequestURI = requestLineParts[1];
+
+            Map<String, String> requestHeaders = parseRequestHeaders(bufferedReader);
 
             URI uri = new URI(fullRequestURI);
             String requestPath = uri.getPath();
-            String query = uri.getQuery();
+            Map<String, String> requestParams = new HashMap<>();
 
-            Map<String, String> queryParams = parseQueryParams(query);
-            Map<String, String> requestHeaders = parseRequestHeaders(bufferedReader);
+            if (uri.getQuery() != null) {
+                requestParams.putAll(parseUrlEncoded(uri.getQuery()));
+            }
+
+            if ("POST".equals(requestHttpMethod)) {
+                int contentLength = Integer.parseInt(requestHeaders.getOrDefault("Content-Length", "0"));
+                if (contentLength > 0) {
+                    String requestBody = parseRequestBody(contentLength, bufferedReader);
+                    requestParams.putAll(parseUrlEncoded(requestBody));
+                }
+            }
+
             Map<String, String> headers = new LinkedHashMap<>();
             byte[] responseBodyBytes = null;
             String contentType = "text/html;charset=utf-8";
             String statusCode = "200 OK";
 
-            if ("/".equals(requestPath)) {
+            if ("/".equals(requestPath) && "GET".equals(requestHttpMethod)) {
                 responseBodyBytes = "Hello world!".getBytes(StandardCharsets.UTF_8);
-            } else if ("/login".equals(requestPath) && queryParams.containsKey("account")) {
-                Optional<User> user = InMemoryUserRepository.findByAccount(queryParams.get("account"));
-                if (user.isEmpty() || !user.get().checkPassword(queryParams.get("password"))) {
+
+            } else if ("/login".equals(requestPath) && "POST".equals(requestHttpMethod)) {
+                String account = requestParams.get("account");
+                String password = requestParams.get("password");
+
+                Optional<User> user = InMemoryUserRepository.findByAccount(account);
+
+                if (user.isPresent() && user.get().checkPassword(password)) {
+                    statusCode = "302 Found";
+                    headers.put("Location", "/index.html");
+                    responseBodyBytes = "로그인 성공".getBytes(StandardCharsets.UTF_8);
+                    log.info("로그인 성공. user: {}", user.get());
+                } else {
                     statusCode = "401 Unauthorized";
                     URL resource = getClass().getClassLoader().getResource("static/401.html");
                     if (resource != null) {
                         responseBodyBytes = Files.readAllBytes(Path.of(resource.toURI()));
-                        log.atInfo().log("로그인 실패");
                     }
-                } else {
-                    statusCode = "302 Found";
-                    headers.put("Location", "/index.html");
-                    responseBodyBytes = "로그인 성공".getBytes();
-                    log.atInfo().log("user: {}", user.toString());
+                    log.info("로그인 실패");
                 }
             } else {
                 String resourcePath;
-                if ("/login".equals(requestPath)) {
+                if ("/login".equals(requestPath) && "GET".equals(requestHttpMethod)) {
                     resourcePath = "static/login.html";
                 } else {
                     resourcePath = "static" + requestPath;
@@ -114,47 +133,50 @@ public class Http11Processor implements Runnable, Processor {
                 headerBuilder.append(entry.getKey())
                         .append(": ")
                         .append(entry.getValue())
-                        .append(" \r\n");
+                        .append("\r\n");
             }
-            headerBuilder.append("\r\n");
 
-            String responseHeaders = headerBuilder.toString();
-
-            outputStream.write(("HTTP/1.1 " + statusCode + " \r\n").getBytes());
-            outputStream.write(responseHeaders.getBytes(StandardCharsets.UTF_8));
+            outputStream.write(("HTTP/1.1 " + statusCode + "\r\n").getBytes(StandardCharsets.UTF_8));
+            outputStream.write(headerBuilder.toString().getBytes(StandardCharsets.UTF_8));
+            outputStream.write("\r\n".getBytes(StandardCharsets.UTF_8));
             outputStream.write(responseBodyBytes);
             outputStream.flush();
 
-        } catch (IOException | UncheckedServletException | URISyntaxException e) {
+        } catch (IOException | URISyntaxException | UncheckedServletException e) {
             log.atError().log(e.getMessage(), e);
         } catch (IllegalArgumentException e) {
             log.atWarn().log(e.getMessage());
         }
     }
 
-    private Map<String, String> parseQueryParams(String query) {
-        Map<String, String> queryParams = new HashMap<>();
-        if (query != null && !query.isEmpty()) {
-            String[] pairs = query.split("&");
-            for (String pair : pairs) {
-                String[] keyValue = pair.split("=", 2);
-                if (keyValue.length == 2) {
-                    String key = URLDecoder.decode(keyValue[0], StandardCharsets.UTF_8);
-                    String value = URLDecoder.decode(keyValue[1], StandardCharsets.UTF_8);
-                    queryParams.put(key, value);
-                }
+    private String parseRequestBody(final int contentLength, final BufferedReader bufferedReader) throws IOException {
+        char[] buffer = new char[contentLength];
+        int bytesRead = bufferedReader.read(buffer, 0, contentLength);
+        return new String(buffer, 0, bytesRead);
+    }
+
+    private Map<String, String> parseUrlEncoded(String encodedString) {
+        Map<String, String> params = new HashMap<>();
+        if (encodedString == null || encodedString.isEmpty()) {
+            return params;
+        }
+
+        String[] pairs = encodedString.split("&");
+        for (String pair : pairs) {
+            String[] keyValue = pair.split("=", 2);
+            if (keyValue.length == 2) {
+                String key = URLDecoder.decode(keyValue[0], StandardCharsets.UTF_8);
+                String value = URLDecoder.decode(keyValue[1], StandardCharsets.UTF_8);
+                params.put(key, value);
             }
         }
-        return queryParams;
+        return params;
     }
 
     private Map<String, String> parseRequestHeaders(BufferedReader bufferedReader) throws IOException {
         Map<String, String> requestHeaders = new HashMap<>();
-        while (true) {
-            String line = bufferedReader.readLine();
-            if (line == null || line.isEmpty()) {
-                break;
-            }
+        String line;
+        while ((line = bufferedReader.readLine()) != null && !line.isEmpty()) {
             String[] headerParts = line.split(": ", 2);
             if (headerParts.length == 2) {
                 requestHeaders.put(headerParts[0], headerParts[1]);
