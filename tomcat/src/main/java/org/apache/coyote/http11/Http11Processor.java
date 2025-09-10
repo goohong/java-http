@@ -21,6 +21,8 @@ import java.util.Map.Entry;
 import java.util.Optional;
 import java.util.UUID;
 import org.apache.coyote.Processor;
+import org.apache.coyote.http11.session.Session;
+import org.apache.coyote.http11.session.SessionManager;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -36,7 +38,7 @@ public class Http11Processor implements Runnable, Processor {
 
     @Override
     public void run() {
-        log.info("connect host: {}, port: {}", connection.getInetAddress(), connection.getPort());
+        log.atInfo().log("connect host: {}, port: {}", connection.getInetAddress(), connection.getPort());
         process(connection);
     }
 
@@ -56,7 +58,7 @@ public class Http11Processor implements Runnable, Processor {
             final String requestHttpMethod = requestLineParts[0];
             final String fullRequestURI = requestLineParts[1];
             final Map<String, String> requestHeaders = parseRequestHeaders(bufferedReader);
-            final Map<String, String> requestCookies = parseCookies(requestHeaders.get("Cookies"));
+            final Map<String, String> requestCookies = parseCookies(requestHeaders.get("Cookie"));
 
             final URI uri = new URI(fullRequestURI);
             final String requestPath = uri.getPath();
@@ -114,7 +116,7 @@ public class Http11Processor implements Runnable, Processor {
             return serveStaticHtml("static/index.html");
         }
         if (httpMethod.equals("GET") && requestPath.equals("/login")) {
-            return serveStaticHtml("static/login.html");
+            return handleLoginGet(cookies);
         }
         if (httpMethod.equals("POST") && requestPath.equals("/login")) {
             return handleLoginPost(requestParams, cookies);
@@ -128,6 +130,24 @@ public class Http11Processor implements Runnable, Processor {
         return handleStaticResource(requestPath);
     }
 
+    private HttpResponse handleLoginGet(final Map<String, String> cookies) throws IOException, URISyntaxException {
+        final String sessionId = cookies.get("JSESSIONID");
+
+        if (sessionId != null && SessionManager.getInstance().findSession(sessionId) != null) {
+            final Map<String, String> headers = new HashMap<>();
+            headers.put("Location", "/");
+            return new HttpResponse("302 Found", headers, new byte[0]);
+        }
+
+        final Map<String, String> headers = new HashMap<>();
+        if (sessionId != null) {
+            log.atInfo().log("만료되었거나 유효하지 않은 세션입니다. JSESSIONID: {}", sessionId);
+            headers.put("Set-Cookie", "JSESSIONID=; Max-Age=0;");
+        }
+
+        return serveStaticHtml("static/login.html", headers);
+    }
+
     private HttpResponse handleLoginPost(final Map<String, String> requestParams, final Map<String, String> cookies)
             throws IOException, URISyntaxException {
         final String account = requestParams.get("account");
@@ -135,15 +155,20 @@ public class Http11Processor implements Runnable, Processor {
         final Optional<User> user = InMemoryUserRepository.findByAccount(account);
 
         if (user.isPresent() && user.get().checkPassword(password) && !cookies.containsKey("JSESSIONID")) {
-            log.info("로그인 성공. user: {}", user.get());
+            Session session = new Session(UUID.randomUUID().toString());
+            session.setAttribute("user", user);
+
+            log.atInfo().log("로그인 성공. user: {}", user.get());
+            log.atInfo().log("세션 생성. JSESSIONID: {}; Max-Age=3600", session.getId());
+            SessionManager.getInstance().add(session);
             final byte[] body = "로그인 성공".getBytes(StandardCharsets.UTF_8);
             final Map<String, String> headers = createDefaultHeaders("text/html;charset=utf-8", body.length);
-            headers.put("Location", "/index.html");
-            headers.put("Set-Cookie", "JSESSIONID=" + UUID.randomUUID().toString());
+            headers.put("Location", "/");
+            headers.put("Set-Cookie", "JSESSIONID=" + session.getId());
             return new HttpResponse("302 Found", headers, body);
         }
 
-        log.info("로그인 실패");
+        log.atInfo().log("로그인 실패");
         final URL resource = getClass().getClassLoader().getResource("static/401.html");
         final byte[] body = Files.readAllBytes(Path.of(resource.toURI()));
         final Map<String, String> headers = createDefaultHeaders("text/html;charset=utf-8", body.length);
@@ -157,17 +182,17 @@ public class Http11Processor implements Runnable, Processor {
         final Optional<User> user = InMemoryUserRepository.findByAccount(account);
 
         if (user.isPresent()) {
-            log.info("회원가입 실패 - 계정 중복: {}", account);
+            log.atInfo().log("회원가입 실패 - 계정 중복: {}", account);
             final Map<String, String> headers = new LinkedHashMap<>();
-            headers.put("Location", "/register.html");
+            headers.put("Location", "/register");
             return new HttpResponse("302 Found", headers, new byte[0]);
         }
 
         InMemoryUserRepository.save(new User(account, password, email));
-        log.info("회원가입 성공. user account: {}", account);
+        log.atInfo().log("회원가입 성공. user account: {}", account);
 
         final Map<String, String> headers = new LinkedHashMap<>();
-        headers.put("Location", "/login.html");
+        headers.put("Location", "/login");
         return new HttpResponse("302 Found", headers, new byte[0]);
     }
 
@@ -201,6 +226,19 @@ public class Http11Processor implements Runnable, Processor {
         if (resource != null) {
             final byte[] body = Files.readAllBytes(Path.of(resource.toURI()));
             final Map<String, String> headers = createDefaultHeaders("text/html;charset=utf-8", body.length);
+            return new HttpResponse("200 OK", headers, body);
+        }
+        return handleNotFound();
+    }
+
+
+    private HttpResponse serveStaticHtml(final String resourcePath, final Map<String, String> headers)
+            throws IOException, URISyntaxException {
+        final URL resource = getClass().getClassLoader().getResource(resourcePath);
+        if (resource != null) {
+            final byte[] body = Files.readAllBytes(Path.of(resource.toURI()));
+            headers.put("Content-Type", "text/html;charset=utf-8");
+            headers.put("Content-Length", String.valueOf(body.length));
             return new HttpResponse("200 OK", headers, body);
         }
         return handleNotFound();
