@@ -164,12 +164,12 @@ public class Http11Processor implements Runnable, Processor {
             session.setAttribute("user", user);
 
             log.atInfo().log("로그인 성공. user: {}", user.get());
-            log.atInfo().log("세션 생성. JSESSIONID: {}; Max-Age=3600", session.getId());
+            log.atInfo().log("세션 생성. JSESSIONID: {};", session.getId());
             SessionManager.getInstance().add(session);
             final byte[] body = "로그인 성공".getBytes(StandardCharsets.UTF_8);
             final Map<String, String> headers = createDefaultHeaders("text/html;charset=utf-8", body.length);
             headers.put("Location", "/index.html");
-            headers.put("Set-Cookie", "JSESSIONID=" + session.getId());
+            headers.put("Set-Cookie", "JSESSIONID=" + session.getId() + "; Max-Age=3600");
             return new HttpResponse("302 Found", headers, body);
         }
 
