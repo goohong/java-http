@@ -140,7 +140,7 @@ public class Http11Processor implements Runnable, Processor {
 
         if (sessionId != null && SessionManager.getInstance().findSession(sessionId) != null) {
             final Map<String, String> headers = new HashMap<>();
-            headers.put("Location", "/");
+            headers.put("Location", "/index.html");
             return new HttpResponse("302 Found", headers, new byte[0]);
         }
 
@@ -168,7 +168,7 @@ public class Http11Processor implements Runnable, Processor {
             SessionManager.getInstance().add(session);
             final byte[] body = "로그인 성공".getBytes(StandardCharsets.UTF_8);
             final Map<String, String> headers = createDefaultHeaders("text/html;charset=utf-8", body.length);
-            headers.put("Location", "/");
+            headers.put("Location", "/index.html");
             headers.put("Set-Cookie", "JSESSIONID=" + session.getId());
             return new HttpResponse("302 Found", headers, body);
         }
