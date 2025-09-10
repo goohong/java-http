@@ -72,10 +72,10 @@ public class Http11Processor implements Runnable, Processor {
                 headerBuilder.append(entry.getKey())
                         .append(": ")
                         .append(entry.getValue())
-                        .append("\r\n");
+                        .append(" \r\n");
             }
 
-            outputStream.write(("HTTP/1.1 " + response.statusCode() + "\r\n").getBytes(StandardCharsets.UTF_8));
+            outputStream.write(("HTTP/1.1 " + response.statusCode() + " \r\n").getBytes(StandardCharsets.UTF_8));
             outputStream.write(headerBuilder.toString().getBytes(StandardCharsets.UTF_8));
             outputStream.write("\r\n".getBytes(StandardCharsets.UTF_8));
             outputStream.write(response.body());
@@ -113,7 +113,12 @@ public class Http11Processor implements Runnable, Processor {
                                final Map<String, String> cookies)
             throws IOException, URISyntaxException {
         if (httpMethod.equals("GET") && requestPath.equals("/")) {
-            return serveStaticHtml("static/index.html");
+            byte[] body = "Hello world!".getBytes();
+            return new HttpResponse(
+                    "200 OK",
+                    createDefaultHeaders("text/html;charset=utf-8", body.length),
+                    body
+            );
         }
         if (httpMethod.equals("GET") && requestPath.equals("/login")) {
             return handleLoginGet(cookies);
