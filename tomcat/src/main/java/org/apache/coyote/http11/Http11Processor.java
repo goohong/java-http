@@ -17,7 +17,9 @@ import java.nio.file.Path;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Map.Entry;
 import java.util.Optional;
+import java.util.UUID;
 import org.apache.coyote.Processor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -54,26 +56,27 @@ public class Http11Processor implements Runnable, Processor {
             final String requestHttpMethod = requestLineParts[0];
             final String fullRequestURI = requestLineParts[1];
             final Map<String, String> requestHeaders = parseRequestHeaders(bufferedReader);
+            final Map<String, String> requestCookies = parseCookies(requestHeaders.get("Cookies"));
 
             final URI uri = new URI(fullRequestURI);
             final String requestPath = uri.getPath();
             final Map<String, String> requestParams = parseRequestParams(uri, requestHttpMethod, requestHeaders,
                     bufferedReader);
 
-            final HttpResponse response = route(requestHttpMethod, requestPath, requestParams);
+            final HttpResponse response = route(requestHttpMethod, requestPath, requestParams, requestCookies);
 
             final StringBuilder headerBuilder = new StringBuilder();
-            for (Map.Entry<String, String> entry : response.headers.entrySet()) {
+            for (Entry<String, String> entry : response.headers().entrySet()) {
                 headerBuilder.append(entry.getKey())
                         .append(": ")
                         .append(entry.getValue())
                         .append("\r\n");
             }
 
-            outputStream.write(("HTTP/1.1 " + response.statusCode + "\r\n").getBytes(StandardCharsets.UTF_8));
+            outputStream.write(("HTTP/1.1 " + response.statusCode() + "\r\n").getBytes(StandardCharsets.UTF_8));
             outputStream.write(headerBuilder.toString().getBytes(StandardCharsets.UTF_8));
             outputStream.write("\r\n".getBytes(StandardCharsets.UTF_8));
-            outputStream.write(response.body);
+            outputStream.write(response.body());
             outputStream.flush();
 
         } catch (IOException | URISyntaxException | UncheckedServletException e) {
@@ -102,8 +105,10 @@ public class Http11Processor implements Runnable, Processor {
         return requestParams;
     }
 
-    private HttpResponse route(final String httpMethod, final String requestPath,
-                               final Map<String, String> requestParams)
+    private HttpResponse route(final String httpMethod,
+                               final String requestPath,
+                               final Map<String, String> requestParams,
+                               final Map<String, String> cookies)
             throws IOException, URISyntaxException {
         if (httpMethod.equals("GET") && requestPath.equals("/")) {
             return serveStaticHtml("static/index.html");
@@ -112,7 +117,7 @@ public class Http11Processor implements Runnable, Processor {
             return serveStaticHtml("static/login.html");
         }
         if (httpMethod.equals("POST") && requestPath.equals("/login")) {
-            return handleLoginPost(requestParams);
+            return handleLoginPost(requestParams, cookies);
         }
         if (httpMethod.equals("GET") && requestPath.equals("/register")) {
             return serveStaticHtml("static/register.html");
@@ -123,17 +128,18 @@ public class Http11Processor implements Runnable, Processor {
         return handleStaticResource(requestPath);
     }
 
-    private HttpResponse handleLoginPost(final Map<String, String> requestParams)
+    private HttpResponse handleLoginPost(final Map<String, String> requestParams, final Map<String, String> cookies)
             throws IOException, URISyntaxException {
         final String account = requestParams.get("account");
         final String password = requestParams.get("password");
         final Optional<User> user = InMemoryUserRepository.findByAccount(account);
 
-        if (user.isPresent() && user.get().checkPassword(password)) {
+        if (user.isPresent() && user.get().checkPassword(password) && !cookies.containsKey("JSESSIONID")) {
             log.info("로그인 성공. user: {}", user.get());
             final byte[] body = "로그인 성공".getBytes(StandardCharsets.UTF_8);
             final Map<String, String> headers = createDefaultHeaders("text/html;charset=utf-8", body.length);
             headers.put("Location", "/index.html");
+            headers.put("Set-Cookie", "JSESSIONID=" + UUID.randomUUID().toString());
             return new HttpResponse("302 Found", headers, body);
         }
 
@@ -190,7 +196,7 @@ public class Http11Processor implements Runnable, Processor {
         return new HttpResponse("404 Not Found", headers, body);
     }
 
-    private HttpResponse serveStaticHtml(String resourcePath) throws IOException, URISyntaxException {
+    private HttpResponse serveStaticHtml(final String resourcePath) throws IOException, URISyntaxException {
         final URL resource = getClass().getClassLoader().getResource(resourcePath);
         if (resource != null) {
             final byte[] body = Files.readAllBytes(Path.of(resource.toURI()));
@@ -241,7 +247,30 @@ public class Http11Processor implements Runnable, Processor {
         return params;
     }
 
-    private Map<String, String> parseRequestHeaders(BufferedReader bufferedReader) throws IOException {
+    private Map<String, String> parseCookies(final String requestCookies) {
+        Map<String, String> cookies = new HashMap<>();
+
+        if (requestCookies == null || requestCookies.isEmpty()) {
+            return cookies;
+        }
+
+        final String[] cookiePairs = requestCookies.split(";");
+
+        for (String pair : cookiePairs) {
+            String trimmedPair = pair.trim();
+            final String[] keyValue = trimmedPair.split("=", 2);
+
+            if (keyValue.length == 2) {
+                final String key = keyValue[0];
+                final String value = keyValue[1];
+
+                cookies.put(key, value);
+            }
+        }
+        return cookies;
+    }
+
+    private Map<String, String> parseRequestHeaders(final BufferedReader bufferedReader) throws IOException {
         Map<String, String> requestHeaders = new HashMap<>();
         String line;
         while ((line = bufferedReader.readLine()) != null && !line.isEmpty()) {
@@ -251,8 +280,5 @@ public class Http11Processor implements Runnable, Processor {
             }
         }
         return requestHeaders;
-    }
-
-    private record HttpResponse(String statusCode, Map<String, String> headers, byte[] body) {
     }
 }
