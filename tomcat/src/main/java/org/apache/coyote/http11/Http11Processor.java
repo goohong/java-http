@@ -49,59 +49,65 @@ public class Http11Processor implements Runnable, Processor {
 
             final HttpRequest httpRequest = new HttpRequest(bufferedReader);
 
-            final HttpResponse response = route(httpRequest);
+            final String requestHttpMethod = httpRequest.getRequestLine().getMethod();
+            final String requestPath = httpRequest.getRequestLine().getPath();
+            final Map<String, String> requestParams = httpRequest.getRequestParams();
+            final Map<String, String> requestCookies = httpRequest.getHttpCookies();
+
+            final HttpResponse response = route(requestHttpMethod, requestPath, requestParams, requestCookies);
+
+            outputStream.write((response.getStatusLine().toString() + " \r\n").getBytes(StandardCharsets.UTF_8));
 
             final StringBuilder headerBuilder = new StringBuilder();
-            for (Entry<String, String> entry : response.headers().entrySet()) {
+            for (Entry<String, String> entry : response.getHeaders().entrySet()) {
                 headerBuilder.append(entry.getKey())
                         .append(": ")
                         .append(entry.getValue())
                         .append(" \r\n");
             }
 
-            outputStream.write(("HTTP/1.1 " + response.statusCode() + " \r\n").getBytes(StandardCharsets.UTF_8));
             outputStream.write(headerBuilder.toString().getBytes(StandardCharsets.UTF_8));
             outputStream.write("\r\n".getBytes(StandardCharsets.UTF_8));
-            outputStream.write(response.body());
+            outputStream.write(response.getBody());
             outputStream.flush();
 
         } catch (IOException e) {
+            // This can happen if the client closes the connection or sends an empty request
             log.atInfo().log("Connection error: {}", e.getMessage());
         } catch (URISyntaxException | UncheckedServletException e) {
             log.atError().log(e.getMessage(), e);
         } catch (IllegalArgumentException e) {
+            // This can happen for malformed request lines
             log.atWarn().log(e.getMessage());
         }
     }
 
-    private HttpResponse route(HttpRequest httpRequest)
+    private HttpResponse route(final String httpMethod,
+                               final String requestPath,
+                               final Map<String, String> requestParams,
+                               final Map<String, String> cookies)
             throws IOException, URISyntaxException {
-        final String httpMethod = httpRequest.getRequestLine().getMethod();
-        final String path = httpRequest.getRequestLine().getPath();
-        final Map<String, String> requestParams = httpRequest.getRequestParams();
-        final Map<String, String> httpCookies = httpRequest.getHttpCookies();
-
-        if (httpMethod.equals("GET") && path.equals("/")) {
+        if (httpMethod.equals("GET") && requestPath.equals("/")) {
             byte[] body = "Hello world!".getBytes();
             return new HttpResponse(
-                    "200 OK",
+                    "HTTP/1.1 200 OK",
                     createDefaultHeaders("text/html;charset=utf-8", body.length),
                     body
             );
         }
-        if (httpMethod.equals("GET") && path.equals("/login")) {
-            return handleLoginGet(httpCookies);
+        if (httpMethod.equals("GET") && requestPath.equals("/login")) {
+            return handleLoginGet(cookies);
         }
-        if (httpMethod.equals("POST") && path.equals("/login")) {
-            return handleLoginPost(requestParams, httpCookies);
+        if (httpMethod.equals("POST") && requestPath.equals("/login")) {
+            return handleLoginPost(requestParams, cookies);
         }
-        if (httpMethod.equals("GET") && path.equals("/register")) {
+        if (httpMethod.equals("GET") && requestPath.equals("/register")) {
             return serveStaticHtml("static/register.html");
         }
-        if (httpMethod.equals("POST") && path.equals("/register")) {
+        if (httpMethod.equals("POST") && requestPath.equals("/register")) {
             return handleRegisterPost(requestParams);
         }
-        return handleStaticResource(path);
+        return handleStaticResource(requestPath);
     }
 
     private HttpResponse handleLoginGet(final Map<String, String> cookies) throws IOException, URISyntaxException {
@@ -110,7 +116,7 @@ public class Http11Processor implements Runnable, Processor {
         if (sessionId != null && SessionManager.getInstance().findSession(sessionId) != null) {
             final Map<String, String> headers = new HashMap<>();
             headers.put("Location", "/");
-            return new HttpResponse("302 Found", headers, new byte[0]);
+            return new HttpResponse("HTTP/1.1 302 Found", headers, new byte[0]);
         }
 
         final Map<String, String> headers = new HashMap<>();
@@ -139,14 +145,14 @@ public class Http11Processor implements Runnable, Processor {
             final Map<String, String> headers = createDefaultHeaders("text/html;charset=utf-8", body.length);
             headers.put("Location", "/");
             headers.put("Set-Cookie", "JSESSIONID=" + session.getId());
-            return new HttpResponse("302 Found", headers, body);
+            return new HttpResponse("HTTP/1.1 302 Found", headers, body);
         }
 
         log.atInfo().log("Login failed");
         final URL resource = getClass().getClassLoader().getResource("static/401.html");
         final byte[] body = Files.readAllBytes(Path.of(resource.toURI()));
         final Map<String, String> headers = createDefaultHeaders("text/html;charset=utf-8", body.length);
-        return new HttpResponse("401 Unauthorized", headers, body);
+        return new HttpResponse("HTTP/1.1 401 Unauthorized", headers, body);
     }
 
     private HttpResponse handleRegisterPost(final Map<String, String> requestParams) {
@@ -159,7 +165,7 @@ public class Http11Processor implements Runnable, Processor {
             log.atInfo().log("Registration failed - account exists: {}", account);
             final Map<String, String> headers = new LinkedHashMap<>();
             headers.put("Location", "/register");
-            return new HttpResponse("302 Found", headers, new byte[0]);
+            return new HttpResponse("HTTP/1.1 302 Found", headers, new byte[0]);
         }
 
         InMemoryUserRepository.save(new User(account, password, email));
@@ -167,7 +173,7 @@ public class Http11Processor implements Runnable, Processor {
 
         final Map<String, String> headers = new LinkedHashMap<>();
         headers.put("Location", "/login");
-        return new HttpResponse("302 Found", headers, new byte[0]);
+        return new HttpResponse("HTTP/1.1 302 Found", headers, new byte[0]);
     }
 
     private HttpResponse handleStaticResource(final String requestPath) throws IOException, URISyntaxException {
@@ -177,7 +183,7 @@ public class Http11Processor implements Runnable, Processor {
             final byte[] body = Files.readAllBytes(Path.of(resource.toURI()));
             final String contentType = getContentType(resourcePath);
             final Map<String, String> headers = createDefaultHeaders(contentType, body.length);
-            return new HttpResponse("200 OK", headers, body);
+            return new HttpResponse("HTTP/1.1 200 OK", headers, body);
         }
 
         return handleNotFound();
@@ -192,7 +198,7 @@ public class Http11Processor implements Runnable, Processor {
             body = "404 Not Found".getBytes(StandardCharsets.UTF_8);
         }
         final Map<String, String> headers = createDefaultHeaders("text/html;charset=utf-8", body.length);
-        return new HttpResponse("404 Not Found", headers, body);
+        return new HttpResponse("HTTP/1.1 404 Not Found", headers, body);
     }
 
     private HttpResponse serveStaticHtml(final String resourcePath) throws IOException, URISyntaxException {
@@ -200,7 +206,7 @@ public class Http11Processor implements Runnable, Processor {
         if (resource != null) {
             final byte[] body = Files.readAllBytes(Path.of(resource.toURI()));
             final Map<String, String> headers = createDefaultHeaders("text/html;charset=utf-8", body.length);
-            return new HttpResponse("200 OK", headers, body);
+            return new HttpResponse("HTTP/1.1 200 OK", headers, body);
         }
         return handleNotFound();
     }
@@ -213,7 +219,7 @@ public class Http11Processor implements Runnable, Processor {
             final byte[] body = Files.readAllBytes(Path.of(resource.toURI()));
             headers.put("Content-Type", "text/html;charset=utf-8");
             headers.put("Content-Length", String.valueOf(body.length));
-            return new HttpResponse("200 OK", headers, body);
+            return new HttpResponse("HTTP/1.1 200 OK", headers, body);
         }
         return handleNotFound();
     }
@@ -235,3 +241,4 @@ public class Http11Processor implements Runnable, Processor {
         return headers;
     }
 }
+
