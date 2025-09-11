@@ -18,9 +18,9 @@ import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Optional;
 import java.util.UUID;
+import org.apache.catalina.session.Session;
+import org.apache.catalina.session.SessionManager;
 import org.apache.coyote.Processor;
-import org.apache.coyote.http11.session.Session;
-import org.apache.coyote.http11.session.SessionManager;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -117,6 +117,8 @@ public class Http11Processor implements Runnable, Processor {
             final Map<String, String> headers = new HashMap<>();
             headers.put("Location", "/");
             return new HttpResponse("HTTP/1.1 302 Found", headers, new byte[0]);
+            headers.put("Location", "/index.html");
+            return new HttpResponse("302 Found", headers, new byte[0]);
         }
 
         final Map<String, String> headers = new HashMap<>();
@@ -143,9 +145,9 @@ public class Http11Processor implements Runnable, Processor {
             SessionManager.getInstance().add(session);
             final byte[] body = "Login success".getBytes(StandardCharsets.UTF_8);
             final Map<String, String> headers = createDefaultHeaders("text/html;charset=utf-8", body.length);
-            headers.put("Location", "/");
-            headers.put("Set-Cookie", "JSESSIONID=" + session.getId());
-            return new HttpResponse("HTTP/1.1 302 Found", headers, body);
+            headers.put("Location", "/index.html");
+            headers.put("Set-Cookie", "JSESSIONID=" + session.getId() + "; Max-Age=3600");
+            return new HttpResponse("302 Found", headers, body);
         }
 
         log.atInfo().log("Login failed");
@@ -229,7 +231,7 @@ public class Http11Processor implements Runnable, Processor {
             return "text/css";
         }
         if (resourcePath.endsWith(".js")) {
-            return "application/javascript";
+            return "text/javascript";
         }
         return "text/html;charset=utf-8";
     }
