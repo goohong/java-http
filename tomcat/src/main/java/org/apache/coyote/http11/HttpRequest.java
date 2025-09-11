@@ -17,7 +17,6 @@ public class HttpRequest {
     public HttpRequest(BufferedReader br) throws IOException {
         String line = br.readLine();
         if (line == null) {
-            // Special case for empty request, throw exception to be caught by processor
             throw new IOException("Empty request from client.");
         }
         this.requestLine = RequestLine.from(line);
