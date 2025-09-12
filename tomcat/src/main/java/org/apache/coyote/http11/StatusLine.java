@@ -11,6 +11,10 @@ public class StatusLine {
         this.statusMessage = statusMessage;
     }
 
+    public static StatusLine empty() {
+        return new StatusLine("", "", "");
+    }
+
     public static StatusLine from(final String statusLine) {
         if (statusLine == null || statusLine.isEmpty()) {
             throw new IllegalArgumentException("Status line cannot be null or empty");
