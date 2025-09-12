@@ -38,9 +38,6 @@ public class HttpResponse {
     }
 
     private void addDefaultHeaders() {
-        if (headers.get("Content-Length") == null) {
-            headers.put("Content-Length", String.valueOf(body.length));
-        }
         if (headers.get("Content-Type") == null) {
             headers.put("Content-Type", DEFAULT_CONTENT_TYPE);
         }
@@ -55,6 +52,7 @@ public class HttpResponse {
     }
 
     public void setBody(final byte[] body) {
+        headers.put("Content-Length", String.valueOf(body.length));
         this.body = body;
     }
 }
