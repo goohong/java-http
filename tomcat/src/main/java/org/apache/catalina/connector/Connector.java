@@ -6,6 +6,7 @@ import java.net.ServerSocket;
 import java.net.Socket;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import org.apache.coyote.http11.Http11Processor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -62,6 +63,10 @@ public class Connector implements Runnable {
         try {
             process(serverSocket.accept());
         } catch (IOException e) {
+            if (stopped) {
+                log.debug("Server socket closed, stopping accept loop.");
+                return;
+            }
             log.error(e.getMessage(), e);
         }
     }
@@ -79,7 +84,21 @@ public class Connector implements Runnable {
         try {
             serverSocket.close();
         } catch (IOException e) {
-            log.error(e.getMessage(), e);
+            log.error("Error while closing server socket", e);
+        } finally {
+            executorService.shutdown();
+            try {
+                if (!executorService.awaitTermination(30, TimeUnit.SECONDS)) {
+                    executorService.shutdownNow();
+                    if (!executorService.awaitTermination(30, TimeUnit.SECONDS)) {
+                        log.error("ExecutorService did not terminate");
+                    }
+                }
+            } catch (InterruptedException e) {
+                executorService.shutdownNow();
+                Thread.currentThread().interrupt();
+            }
+            log.info("Connector stopped.");
         }
     }
 
