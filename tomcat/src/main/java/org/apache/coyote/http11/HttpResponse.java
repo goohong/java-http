@@ -3,7 +3,7 @@ package org.apache.coyote.http11;
 import java.util.HashMap;
 import java.util.Map;
 
-public final class HttpResponse {
+public class HttpResponse {
     private StatusLine statusLine;
     private Map<String, String> headers;
     private byte[] body;
@@ -15,7 +15,7 @@ public final class HttpResponse {
     }
 
     public static HttpResponse empty() {
-        return new HttpResponse(null, new HashMap<>(), "".getBytes());
+        return new HttpResponse(StatusLine.empty(), new HashMap<>(), "".getBytes());
     }
 
     public StatusLine getStatusLine() {
